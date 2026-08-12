@@ -1,0 +1,17 @@
+import { randomUUID } from 'node:crypto';
+import { ContactModel } from '../contacts/contact.model.js';
+import { TemplateModel } from './template.model.js';
+import { extractVariables, renderPersonalization } from './personalization.service.js';
+import { generateTemplates } from './gemini.service.js';
+
+const publicTemplate = (template: { _id: unknown; groupId: string; approach: string; subject: string; body: string; variables?: string[]; selected: boolean; createdAt: Date; updatedAt: Date }) => ({ id: String(template._id), groupId: template.groupId, approach: template.approach, subject: template.subject, body: template.body, variables: template.variables ?? extractVariables(`${template.subject}\n${template.body}`), selected: template.selected, createdAt: template.createdAt, updatedAt: template.updatedAt });
+export async function createGeneratedTemplates(userId: string, context: { audience: string; objective: string; value: string; tone: string; additionalContext: string }) {
+  const generated = await generateTemplates(context); const groupId = randomUUID();
+  const templates = await TemplateModel.insertMany(generated.templates.map((template) => ({ userId, groupId, ...template, variables: extractVariables(`${template.subject}\n${template.body}`), context })));
+  return templates.map(publicTemplate);
+}
+export async function createCustomTemplate(userId: string, values: { approach: string; subject: string; body: string }) { const template = await TemplateModel.create({ userId, groupId: `custom-${randomUUID()}`, ...values, variables: extractVariables(`${values.subject}\n${values.body}`), context: { audience: '', objective: '', value: '', tone: 'Custom', additionalContext: '' } }); return publicTemplate(template); }
+export async function listTemplates(userId: string) { return (await TemplateModel.find({ userId }).sort({ createdAt: -1 }).limit(100)).map(publicTemplate); }
+export async function updateTemplate(userId: string, templateId: string, values: { subject: string; body: string }) { const template = await TemplateModel.findOneAndUpdate({ _id: templateId, userId }, { ...values, variables: extractVariables(`${values.subject}\n${values.body}`) }, { new: true }); return template ? publicTemplate(template) : null; }
+export async function selectTemplate(userId: string, templateId: string) { const template = await TemplateModel.findOne({ _id: templateId, userId }); if (!template) return null; await TemplateModel.updateMany({ userId, groupId: template.groupId }, { selected: false }); template.selected = true; await template.save(); return publicTemplate(template); }
+export async function previewTemplate(userId: string, templateId: string, contactId: string) { const [template, contact] = await Promise.all([TemplateModel.findOne({ _id: templateId, userId }), ContactModel.findOne({ _id: contactId, userId }).lean()]); if (!template || !contact) return null; const source = { ...contact, customFields: contact.customFields ? Object.fromEntries(Object.entries(contact.customFields)) : {} }; const subject = renderPersonalization(template.subject, source); const body = renderPersonalization(template.body, source); return { template: publicTemplate(template), contact: { id: String(contact._id), email: contact.email, name: [contact.firstName, contact.lastName].filter(Boolean).join(' ') }, subject: subject.rendered, body: body.rendered, missingVariables: [...new Set([...subject.missingVariables, ...body.missingVariables])] }; }

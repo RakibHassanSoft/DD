@@ -1,0 +1,7 @@
+[build]
+  base = "."
+  command = "npm run build --workspace=@mailflow/web"
+  publish = "apps/web/.next"
+
+[build.environment]
+  NODE_VERSION = "22"

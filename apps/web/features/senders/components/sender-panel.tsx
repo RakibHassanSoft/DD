@@ -1,0 +1,19 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { apiBaseUrl } from '../../../lib/api-client';
+import { disconnectSender, getSenders, sendTestEmail, updateSenderControls } from '../senders.api';
+import type { Sender } from '../types';
+
+export function SenderPanel() {
+  const [senders, setSenders] = useState<Sender[]>([]);
+  const [notice, setNotice] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  const refresh = () => getSenders().then(setSenders).catch((error: Error) => setNotice(error.message));
+  useEffect(() => { refresh(); }, []);
+  const connectGoogle = () => { window.location.assign(`${apiBaseUrl}/google/connect`); };
+  async function test(sender: Sender) { setBusy(sender.id); try { setNotice(await sendTestEmail(sender.id)); refresh(); } catch (error) { setNotice(error instanceof Error ? error.message : 'Test failed.'); } finally { setBusy(null); } }
+  async function disconnect(sender: Sender) { if (!window.confirm(`Disconnect ${sender.email}?`)) return; setBusy(sender.id); try { await disconnectSender(sender.id); setNotice('Sender disconnected.'); refresh(); } catch (error) { setNotice(error instanceof Error ? error.message : 'Disconnect failed.'); } finally { setBusy(null); } }
+  async function updateControls(sender: Sender, patch: Partial<Sender['sendingControls']>) { setBusy(sender.id); try { await updateSenderControls(sender.id, { ...sender.sendingControls, ...patch }); setNotice('Sender safety controls updated.'); refresh(); } catch (error) { setNotice(error instanceof Error ? error.message : 'Could not update controls.'); } finally { setBusy(null); } }
+  return <section className="sender-panel"><div className="section-heading"><div><span className="eyebrow">PHASE 2 + 6 · GMAIL SAFETY</span><h2>Sender accounts</h2><p>Connect Gmail through Google OAuth. Mailflow never asks for your Gmail password.</p></div><button className="button" onClick={connectGoogle}>Connect Google account</button></div>{notice && <div className="message">{notice}</div>}{senders.length === 0 ? <div className="empty-sender"><strong>No sender connected yet</strong><span>Connect your Google account to authorize self-addressed connection tests.</span></div> : <div className="sender-list">{senders.map((sender) => <article className="sender-card" key={sender.id}><div className="sender-main"><div><strong>{sender.displayName}</strong><span>{sender.email}</span></div></div><div className="sender-state"><span>{sender.status === 'connected' ? 'Connected' : sender.status.replace('_', ' ')}</span>{sender.lastProviderError && <small>Last provider error: {sender.lastProviderError}</small>}</div><div className="sender-actions">{sender.status === 'connected' && <button className="button secondary" disabled={busy === sender.id} onClick={() => test(sender)}>{busy === sender.id ? 'Sending…' : 'Send self-test'}</button>}<button className="text-button" disabled={busy === sender.id} onClick={() => disconnect(sender)}>Disconnect</button></div><div className="sender-controls"><label><input type="checkbox" checked={sender.sendingControls.enabled} disabled={busy === sender.id} onChange={(event) => updateControls(sender, { enabled: event.target.checked })} /> Sending controls enabled</label><label>Daily limit <input type="number" min="1" max="500" defaultValue={sender.sendingControls.dailyLimit} disabled={busy === sender.id || !sender.sendingControls.enabled} onBlur={(event) => { const value = Number(event.target.value); if (value !== sender.sendingControls.dailyLimit) updateControls(sender, { dailyLimit: value }); }} /></label></div></article>)}</div>}<p className="safety-note">A test sends only to the connected sender address. Campaign sends remain subject to these controls, suppression checks, and provider response.</p></section>;
+}

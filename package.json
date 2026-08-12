@@ -1,0 +1,16 @@
+{
+  "name": "mailflow",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev": "npm run dev --workspace=@mailflow/api",
+    "dev:api": "npm run dev --workspace=@mailflow/api",
+    "dev:web": "npm run dev --workspace=@mailflow/web",
+    "dev:worker": "npm run dev:worker --workspace=@mailflow/api",
+    "build": "npm run build --workspaces",
+    "check": "npm run check --workspaces",
+    "test": "npm run build --workspace=@mailflow/api && npm run test --workspace=@mailflow/api && npm run check --workspace=@mailflow/web && npm run test --workspace=@mailflow/web",
+    "test:load": "node scripts/load-health.mjs"
+  }
+}

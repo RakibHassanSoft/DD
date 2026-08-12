@@ -1,0 +1,1 @@
+export type Sender = { id: string; provider: 'google'; email: string; displayName: string; status: 'connected' | 'reconnect_required' | 'disconnected'; usage: { todaySent: number; usageDate: string }; sendingControls: { enabled: boolean; dailyLimit: number }; lastSendingActivityAt?: string; lastProviderError?: string };

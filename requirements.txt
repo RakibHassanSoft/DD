@@ -1,0 +1,1419 @@
+# Developer Requirements Report
+
+## AI-Powered Gmail Campaign & Outreach SaaS
+
+### 1. Executive Summary
+
+Build a production-ready SaaS platform that allows users to:
+
+* Connect their own Google/Gmail sender account through OAuth.
+* Import prospect data from CSV, XLS, or XLSX.
+* Create personalized email campaigns.
+* Use Gemini AI to generate five campaign-specific email templates.
+* Select and edit the preferred template.
+* Personalize emails using prospect data.
+* Schedule campaigns.
+* Send through the user's authorized Gmail account.
+* Control sending through a safety-first queue.
+* Automatically stop or pause campaigns when provider or campaign risk signals occur.
+* Track campaign activity and results.
+* Maintain suppression/unsubscribe records.
+
+The product should prioritize:
+
+**Deliverability → Compliance → Reliability → User Experience → Scale**
+
+It must never promise that every email will reach the inbox or that an email can never be classified as spam.
+
+---
+
+# 2. Recommended Technology Stack
+
+## Frontend
+
+* Next.js
+* TypeScript
+* Tailwind CSS
+* React
+* TanStack Query
+* React Hook Form
+* Zod
+
+## Backend
+
+* Node.js
+* Express.js
+* TypeScript
+* REST API
+
+## Database
+
+* MongoDB
+* Mongoose
+
+## Queue / Scheduling
+
+* Redis
+* BullMQ
+
+## AI
+
+* Google Gemini API
+
+## Email
+
+* Gmail API
+* Google OAuth 2.0
+
+Google's Gmail API officially supports automated/programmatic sending, and the `gmail.send` OAuth scope allows an application to send mail on behalf of the user.
+
+## Infrastructure
+
+* Docker
+* Nginx
+* HTTPS
+* GitHub Actions
+* Cloud/VPS deployment
+
+---
+
+# 3. Product Architecture
+
+```text
+                         ┌─────────────────────┐
+                         │      Next.js        │
+                         │  TypeScript +       │
+                         │    Tailwind CSS     │
+                         └──────────┬──────────┘
+                                    │
+                                    ▼
+                         ┌─────────────────────┐
+                         │   Node.js / Express │
+                         │        API          │
+                         └───────┬─────┬───────┘
+                                 │     │
+                    ┌────────────┘     └──────────────┐
+                    ▼                                 ▼
+             ┌─────────────┐                   ┌─────────────┐
+             │   MongoDB   │                   │    Redis    │
+             │             │                   │             │
+             │ Users       │                   │ Queue       │
+             │ Contacts    │                   │ Scheduler   │
+             │ Campaigns   │                   └──────┬──────┘
+             │ Templates   │                          │
+             │ Analytics   │                          ▼
+             └─────────────┘                   ┌─────────────┐
+                                               │ BullMQ      │
+                                               │ Workers     │
+                                               └──────┬──────┘
+                                                      │
+                                  ┌───────────────────┼───────────────────┐
+                                  ▼                   ▼                   ▼
+                           ┌────────────┐      ┌────────────┐      ┌────────────┐
+                           │ Gmail API  │      │ Gemini API │      │ Analytics  │
+                           │            │      │            │      │ Engine     │
+                           └────────────┘      └────────────┘      └────────────┘
+```
+
+---
+
+# 4. User Journey
+
+```text
+Register
+   ↓
+Connect Google Account
+   ↓
+Import Contacts
+   ↓
+Validate Contacts
+   ↓
+Create Campaign
+   ↓
+Generate 5 AI Templates
+   ↓
+Select Template
+   ↓
+Preview Personalization
+   ↓
+Configure Schedule
+   ↓
+Safety Validation
+   ↓
+Campaign Ready
+   ↓
+Controlled Queue
+   ↓
+Gmail API
+   ↓
+Campaign Analytics
+```
+
+---
+
+# 5. Google Sender Account Connection
+
+The user should see:
+
+```text
+Connect Sender Account
+
+[ Connect Google Account ]
+```
+
+Clicking this opens Google's OAuth consent flow.
+
+The application should **never ask for or store the user's Gmail password**.
+
+After authorization:
+
+```text
+Sender Account
+
+John Smith
+john@company.com
+
+● Connected
+
+Provider:
+Google Gmail
+
+[Manage]
+[Disconnect]
+```
+
+The Gmail API supports sending through `users.messages.send`, and Google's API documentation lists `gmail.send` as an accepted authorization scope.
+
+---
+
+# 6. OAuth Security
+
+Store:
+
+* Google account ID
+* Sender email
+* Display name
+* Access token
+* Refresh token
+* Token expiry
+* Connection status
+
+OAuth credentials must be encrypted before database storage.
+
+Never expose refresh tokens to the browser.
+
+Backend only:
+
+```text
+Browser
+   ↓
+Backend
+   ↓
+Encrypted OAuth Credentials
+   ↓
+Gmail API
+```
+
+---
+
+# 7. Sender Account Management
+
+Users should be able to manage connected sender accounts.
+
+Each sender should show:
+
+* Email
+* Display name
+* Connection status
+* Current campaign
+* Today's application usage
+* Last sending activity
+* Last provider error
+* Reconnect
+* Disconnect
+
+The system should support multiple authorized sender accounts, but **must not use multiple accounts to bypass Google's limits or anti-abuse systems**.
+
+Each account gets its own:
+
+* OAuth credentials
+* Queue state
+* Sending controls
+* Error history
+* Usage tracking
+* Campaign assignment
+
+---
+
+# 8. Contact Import
+
+Supported:
+
+* CSV
+* XLS
+* XLSX
+
+Example:
+
+```text
+First Name | Last Name | Email | Company | Job Title
+John       | Smith     | ...   | Acme    | CEO
+Sarah      | Lee       | ...   | Beta    | Founder
+```
+
+Upload process:
+
+```text
+Upload
+  ↓
+Parse
+  ↓
+Detect Columns
+  ↓
+Map Columns
+  ↓
+Validate
+  ↓
+Deduplicate
+  ↓
+Preview
+  ↓
+Import
+```
+
+Required:
+
+* Email
+
+Optional:
+
+* First name
+* Last name
+* Company
+* Job title
+* Website
+* Custom fields
+
+---
+
+# 9. Contact Validation
+
+Before contacts enter a campaign:
+
+### Validate
+
+* Email syntax
+* Missing email
+* Duplicate email
+* Previously bounced recipient
+* Suppressed recipient
+* Unsubscribed recipient
+* Missing personalization fields
+
+Invalid records should never enter the sending queue.
+
+---
+
+# 10. Campaign Creation
+
+Campaign fields:
+
+```text
+Campaign Name
+Sender Account
+Contact List
+Campaign Objective
+Target Audience
+Email Context
+Selected Template
+Schedule
+```
+
+Example:
+
+```text
+Campaign:
+SaaS Founder Outreach
+
+Objective:
+Introduce product and request a conversation
+
+Audience:
+SaaS founders
+
+Sender:
+john@company.com
+```
+
+---
+
+# 11. Gemini AI Template Generator
+
+The user provides campaign context:
+
+```text
+Target:
+SaaS founders
+
+Objective:
+Introduce our analytics product
+
+Value:
+Reduces manual reporting work
+
+Tone:
+Professional and concise
+```
+
+The AI generates **5 different templates**.
+
+Example approaches:
+
+1. Concise introduction
+2. Problem/value focused
+3. Personalized business approach
+4. Question-led approach
+5. Short professional outreach
+
+Each template should contain:
+
+* Subject
+* Email body
+* Personalization variables
+
+Example:
+
+```text
+Subject:
+Quick question about {{company}}
+
+Hi {{first_name}},
+
+...
+```
+
+The user can:
+
+* Preview
+* Edit
+* Regenerate
+* Select
+* Save
+
+The system should not allow AI to invent facts about a prospect or company.
+
+---
+
+# 12. Personalization Engine
+
+Supported variables:
+
+```text
+{{first_name}}
+{{last_name}}
+{{company}}
+{{job_title}}
+{{website}}
+```
+
+Custom variables should also be supported.
+
+Example:
+
+```text
+Hi {{first_name}},
+
+I noticed {{company}} is working in {{industry}}.
+```
+
+Before sending:
+
+```text
+Hi Sarah,
+
+I noticed Beta Technologies is working in SaaS.
+```
+
+If required data is missing, the system should skip or safely fall back instead of sending malformed personalization.
+
+---
+
+# 13. Email Preview
+
+Users should be able to preview:
+
+### Template View
+
+```text
+Hi {{first_name}},
+
+...
+```
+
+### Real Contact View
+
+```text
+Hi Sarah,
+
+...
+```
+
+The user should be able to select different imported contacts and verify the final rendered email before launching.
+
+---
+
+# 14. Campaign Safety Review
+
+Before launch, show:
+
+```text
+Campaign Safety Check
+
+✓ Sender connected
+✓ OAuth valid
+✓ Contact list validated
+✓ Duplicate contacts removed
+✓ Suppression list checked
+✓ Personalization validated
+✓ Schedule configured
+✓ Sending controls enabled
+✓ Campaign ready
+```
+
+If an important check fails:
+
+```text
+Campaign cannot start.
+```
+
+---
+
+# 15. Safety-First Sending Engine
+
+This is the most important backend component.
+
+Before each email is processed, check:
+
+```text
+Campaign Active?
+      ↓
+Sender Connected?
+      ↓
+OAuth Valid?
+      ↓
+Recipient Valid?
+      ↓
+Recipient Suppressed?
+      ↓
+Campaign Limit Reached?
+      ↓
+Allowed Sending Window?
+      ↓
+Recent Provider Errors Normal?
+      ↓
+Safety Status OK?
+      ↓
+SEND
+```
+
+If a safety condition fails:
+
+```text
+DO NOT SEND
+```
+
+The job should be delayed, skipped, or the campaign paused depending on the condition.
+
+---
+
+# 16. Sending Strategy
+
+Do **not** build the product around:
+
+> "X emails per Gmail account is guaranteed safe."
+
+Instead use:
+
+### Application-level safety controls
+
+* Configurable limits
+* Gradual volume
+* Controlled queue
+* Sending windows
+* Randomized scheduling within the permitted window
+* Provider error detection
+* Automatic backoff
+* Automatic pause
+* Campaign-level limits
+* Sender-level limits
+
+The system must respect the actual limits imposed by Google rather than attempting to work around them.
+
+---
+
+# 17. Queue Architecture
+
+Never send directly from the campaign API request.
+
+Use:
+
+```text
+Campaign
+   ↓
+Create Email Jobs
+   ↓
+Redis
+   ↓
+BullMQ
+   ↓
+Worker
+   ↓
+Safety Check
+   ↓
+Gmail API
+   ↓
+Result
+```
+
+Example job:
+
+```json
+{
+  "campaignId": "...",
+  "senderId": "...",
+  "contactId": "...",
+  "scheduledAt": "...",
+  "status": "scheduled"
+}
+```
+
+---
+
+# 18. Email Job States
+
+```text
+pending
+scheduled
+processing
+sent
+failed
+retrying
+skipped
+suppressed
+cancelled
+```
+
+Every job should have:
+
+* Attempt count
+* Last error
+* Provider message ID
+* Scheduled time
+* Sent time
+* Failure reason
+
+---
+
+# 19. Provider Error Handling
+
+Handle:
+
+### Authentication Error
+
+```text
+OAuth expired
+      ↓
+Pause sender
+      ↓
+Notify user
+      ↓
+Reconnect
+```
+
+### Rate Limit / Temporary Error
+
+```text
+Provider error
+      ↓
+Exponential backoff
+      ↓
+Retry
+```
+
+### Repeated/Abnormal Errors
+
+```text
+Repeated errors
+      ↓
+Pause campaign
+      ↓
+Notify user
+```
+
+The application must never continuously retry failed requests in an attempt to force delivery.
+
+---
+
+# 20. Deliverability Protection
+
+The goal is:
+
+**Reduce spam risk, not promise zero spam placement.**
+
+The system should implement:
+
+### Gradual Sending
+
+Avoid sudden volume spikes.
+
+### Controlled Scheduling
+
+Spread jobs across the user's configured sending window.
+
+### Recipient Quality Controls
+
+Do not send to:
+
+* Invalid addresses
+* Suppressed addresses
+* Previously hard-bounced addresses
+* Unsubscribed contacts
+
+### Content Quality
+
+The AI generator should avoid:
+
+* Misleading subjects
+* False claims
+* Excessive promotional language
+* Fake personalization
+* Unverifiable statements
+
+### Automatic Pause
+
+If abnormal failure/bounce signals appear:
+
+```text
+Campaign
+   ↓
+Risk Detected
+   ↓
+PAUSE
+   ↓
+Notify User
+```
+
+---
+
+# 21. Unsubscribe / Suppression System
+
+Maintain a suppression database.
+
+```text
+Suppression
+- email
+- userId
+- campaignId
+- reason
+- createdAt
+```
+
+Reasons:
+
+```text
+unsubscribe
+hard_bounce
+manual_block
+invalid
+provider_restriction
+```
+
+Before every send:
+
+```text
+Recipient
+   ↓
+Suppression Check
+   ↓
+Suppressed?
+ ┌───────┴───────┐
+ YES             NO
+ ↓                ↓
+SKIP             CONTINUE
+```
+
+For applicable marketing traffic, the product should provide appropriate unsubscribe functionality and honor opt-out requests promptly.
+
+---
+
+# 22. Scheduling System
+
+User chooses:
+
+* Start date
+* Time zone
+* Sending days
+* Sending window
+* Application-level daily limit
+
+Example:
+
+```text
+Start:
+Monday, August 17
+
+Timezone:
+America/New_York
+
+Window:
+9:00 AM – 4:00 PM
+
+Daily Limit:
+Controlled by platform safety settings
+```
+
+The scheduler should create jobs gradually instead of releasing the entire campaign simultaneously.
+
+---
+
+# 23. Campaign Controls
+
+Users can:
+
+```text
+Start
+Pause
+Resume
+Stop
+Edit
+Duplicate
+Delete
+```
+
+Campaign states:
+
+```text
+DRAFT
+   ↓
+READY
+   ↓
+SCHEDULED
+   ↓
+RUNNING
+   ↓
+COMPLETED
+
+RUNNING
+   ↓
+PAUSED
+   ↓
+RESUMED
+```
+
+---
+
+# 24. Dashboard
+
+Main dashboard:
+
+```text
+Campaigns
+Active Campaigns
+Scheduled Emails
+Sent
+Failed
+Suppressed
+Replies
+```
+
+Example:
+
+```text
+Campaign Performance
+
+Sent          182
+Scheduled      96
+Failed          4
+Suppressed      7
+Replies        18
+```
+
+---
+
+# 25. Campaign Analytics
+
+Each campaign should provide:
+
+### Overview
+
+* Total contacts
+* Scheduled
+* Sent
+* Failed
+* Suppressed
+* Replies
+* Unsubscribes
+
+### Activity
+
+```text
+10:02 AM  Email sent
+10:08 AM  Email sent
+10:14 AM  Email failed
+10:20 AM  Email sent
+```
+
+### Recipient Status
+
+```text
+Sarah       Sent
+Michael     Scheduled
+David       Failed
+Robert      Suppressed
+```
+
+---
+
+# 26. Reply Tracking
+
+The platform can optionally read the connected Gmail mailbox to identify campaign-related replies.
+
+The Gmail API supports mailbox/message retrieval, allowing the application to retrieve message information after sending.
+
+Reply tracking should use:
+
+* Message ID
+* Thread ID
+* References
+* In-Reply-To
+* Campaign ID
+
+The system should avoid treating automated responses or unrelated messages as genuine replies whenever possible.
+
+---
+
+# 27. Database Models
+
+## User
+
+```text
+_id
+name
+email
+passwordHash
+createdAt
+updatedAt
+```
+
+## SenderAccount
+
+```text
+_id
+userId
+provider
+email
+displayName
+encryptedAccessToken
+encryptedRefreshToken
+expiresAt
+status
+usage
+createdAt
+updatedAt
+```
+
+## ContactList
+
+```text
+_id
+userId
+name
+totalContacts
+createdAt
+```
+
+## Contact
+
+```text
+_id
+listId
+email
+firstName
+lastName
+company
+jobTitle
+website
+customFields
+status
+```
+
+## Campaign
+
+```text
+_id
+userId
+senderId
+contactListId
+name
+objective
+selectedTemplate
+schedule
+status
+safetyStatus
+createdAt
+updatedAt
+```
+
+## EmailJob
+
+```text
+_id
+campaignId
+senderId
+contactId
+scheduledAt
+status
+attemptCount
+providerMessageId
+error
+sentAt
+```
+
+## Suppression
+
+```text
+_id
+userId
+email
+reason
+source
+createdAt
+```
+
+---
+
+# 28. Backend API
+
+```text
+/api/auth
+/api/google
+/api/senders
+/api/contacts
+/api/lists
+/api/campaigns
+/api/templates
+/api/ai
+/api/schedules
+/api/email
+/api/analytics
+/api/suppressions
+```
+
+Important endpoints:
+
+```text
+POST /api/google/connect
+GET  /api/google/callback
+
+POST /api/lists/import
+GET  /api/lists/:id
+
+POST /api/ai/generate-templates
+
+POST /api/campaigns
+GET  /api/campaigns
+GET  /api/campaigns/:id
+PUT  /api/campaigns/:id
+
+POST /api/campaigns/:id/start
+POST /api/campaigns/:id/pause
+POST /api/campaigns/:id/resume
+POST /api/campaigns/:id/stop
+
+GET /api/campaigns/:id/analytics
+```
+
+---
+
+# 29. Frontend Pages
+
+## Public
+
+1. Landing Page
+2. Pricing
+3. Login
+4. Register
+5. Privacy
+6. Terms
+
+## Application
+
+1. Dashboard
+2. Sender Accounts
+3. Contact Lists
+4. Import Contacts
+5. Campaigns
+6. Create Campaign
+7. AI Templates
+8. Email Preview
+9. Schedule
+10. Campaign Analytics
+11. Suppression List
+12. Settings
+
+---
+
+# 30. Recommended UI Flow
+
+### Step 1
+
+```text
+Connect Sender
+[Connect Google]
+```
+
+### Step 2
+
+```text
+Import Contacts
+[Upload CSV/XLS/XLSX]
+```
+
+### Step 3
+
+```text
+Create Campaign
+Campaign Name
+Objective
+Audience
+```
+
+### Step 4
+
+```text
+Generate with Gemini
+
+[Generate 5 Templates]
+```
+
+### Step 5
+
+```text
+Choose Template
+
+[Use Template]
+```
+
+### Step 6
+
+```text
+Preview
+
+Generic
+Personalized
+```
+
+### Step 7
+
+```text
+Schedule
+
+Date
+Timezone
+Sending Window
+```
+
+### Step 8
+
+```text
+Safety Check
+
+✓ Sender
+✓ Contacts
+✓ Suppression
+✓ Personalization
+✓ Schedule
+
+[Launch Campaign]
+```
+
+---
+
+# 31. Security
+
+Required:
+
+* HTTPS
+* JWT authentication
+* OAuth 2.0
+* Encrypted tokens
+* Secure cookies
+* Input validation
+* Zod validation
+* Rate limiting
+* CORS
+* MongoDB security
+* Redis authentication
+* Environment variables
+* Audit logs
+* Access control
+* No secrets in Git
+
+---
+
+# 32. Monitoring
+
+Monitor:
+
+* API errors
+* Gmail API errors
+* Queue failures
+* Worker failures
+* Gemini failures
+* OAuth failures
+* Campaign pauses
+* Sending failures
+* Suppression events
+* System health
+
+Example:
+
+```text
+Campaign: #1023
+Sender: user@gmail.com
+Recipient: prospect@example.com
+
+Status:
+FAILED
+
+Reason:
+Provider temporary error
+
+Action:
+Retry scheduled
+```
+
+---
+
+# 33. Production Infrastructure
+
+```text
+                    Internet
+                       │
+                       ▼
+                    Nginx
+                       │
+              ┌────────┴────────┐
+              ▼                 ▼
+          Next.js            Node.js
+          Frontend              API
+                                │
+                  ┌─────────────┼─────────────┐
+                  ▼             ▼             ▼
+               MongoDB        Redis         Gemini
+                                │
+                              BullMQ
+                                │
+                              Worker
+                                │
+                              Gmail
+                                API
+```
+
+Docker containers:
+
+```text
+frontend
+backend
+worker
+redis
+mongodb
+nginx
+```
+
+---
+
+# 34. Environment Variables
+
+```text
+NEXT_PUBLIC_API_URL=
+
+MONGODB_URI=
+REDIS_URL=
+
+JWT_SECRET=
+ENCRYPTION_KEY=
+
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=
+
+GEMINI_API_KEY=
+```
+
+Sensitive variables must remain server-side.
+
+---
+
+# 35. MVP Development Phases
+
+## Phase 1 — Authentication
+
+* Register
+* Login
+* JWT
+* User profile
+
+## Phase 2 — Gmail
+
+* Google OAuth
+* Sender connection
+* Token storage
+* Gmail API integration
+* Test email
+
+## Phase 3 — Contacts
+
+* CSV
+* XLS
+* XLSX
+* Column mapping
+* Validation
+* Deduplication
+
+## Phase 4 — AI
+
+* Gemini
+* Five templates
+* Template editing
+* Template selection
+* Personalization
+
+## Phase 5 — Campaign Engine
+
+* Campaign creation
+* Preview
+* Scheduling
+* Redis
+* BullMQ
+* Worker
+* Safety engine
+
+## Phase 6 — Deliverability Controls
+
+* Suppression
+* Unsubscribe
+* Bounce/failure handling
+* Provider-error backoff
+* Automatic campaign pause
+* Sending controls
+
+## Phase 7 — Analytics
+
+* Sent
+* Failed
+* Suppressed
+* Replies
+* Campaign activity
+* Sender activity
+
+## Phase 8 — Production
+
+* Security
+* Monitoring
+* Docker
+* CI/CD
+* Load testing
+* Backup
+* Deployment
+* Health checks
+
+---
+
+# 36. Definition of Done
+
+The MVP is complete when a user can:
+
+1. Create an account.
+2. Connect a Google sender through OAuth.
+3. Import CSV/XLS/XLSX contacts.
+4. Map contact fields.
+5. Validate the list.
+6. Create a campaign.
+7. Generate five AI templates.
+8. Select and edit a template.
+9. Personalize emails.
+10. Preview final messages.
+11. Configure a schedule.
+12. Run the safety check.
+13. Launch the campaign.
+14. Send through the user's authorized Gmail account.
+15. Automatically skip suppressed contacts.
+16. Handle provider errors safely.
+17. Pause/resume campaigns.
+18. View campaign analytics.
+19. Manage sender accounts.
+20. Maintain a suppression/unsubscribe system.
+21. Reconnect expired Google authorization.
+22. Monitor campaign and sending health.
+
+---
+
+# 37. Critical Product Rule
+
+The product should **not market itself as**:
+
+> "Send X emails every day without going to spam."
+
+Instead:
+
+> **"AI-powered Gmail campaigns with controlled scheduling, personalization, and deliverability-focused safeguards."**
+
+The application should treat Gmail's own restrictions as authoritative. Google officially supports automated sending through the Gmail API, but API access does not mean Gmail guarantees inbox placement.
+
+---
+
+# 38. Final Recommended Product Positioning
+
+### Product
+
+**AI Gmail Campaign Manager**
+
+### Core Value
+
+> Connect your Google account, import your prospects, generate personalized campaign emails with AI, schedule them, and manage the entire campaign from one dashboard.
+
+### Main Features
+
+**Google OAuth**
+→ Secure sender connection
+
+**AI Templates**
+→ 5 campaign-specific templates
+
+**CSV/XLS Import**
+→ Fast prospect onboarding
+
+**Personalization**
+→ Dynamic prospect fields
+
+**Smart Scheduling**
+→ Controlled sending windows
+
+**Safety Engine**
+→ Provider-aware rate controls and automatic pausing
+
+**Suppression**
+→ Prevent sending to blocked/unsubscribed contacts
+
+**Analytics**
+→ Campaign performance and activity
+
+**Production Infrastructure**
+→ Redis + BullMQ + Gmail API + MongoDB
+
+### Most Important Engineering Principle
+
+**Do not optimize the system for maximum email volume. Optimize it for reliable, compliant, controlled sending.**
+
+That approach gives the SaaS a much stronger foundation for production, reduces the chance of users abusing the system, and avoids making a promise—"never spam"—that no software can technically guarantee.
